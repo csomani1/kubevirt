@@ -1,8 +1,10 @@
 package guestfs_test
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -12,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	vmSchema "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
 
 	"kubevirt.io/kubevirt/pkg/virtctl/guestfs"
@@ -36,6 +39,8 @@ var _ = Describe("Guestfs shell", func() {
 	var (
 		kubeClient     *fake.Clientset
 		kubevirtClient *kubecli.MockKubevirtClient
+		vmInterface    *kubecli.MockVirtualMachineInterface
+		ctrl           *gomock.Controller
 	)
 	mode := v1.PersistentVolumeFilesystem
 	pvc := &v1.PersistentVolumeClaim{
@@ -45,6 +50,46 @@ var _ = Describe("Guestfs shell", func() {
 		},
 		Spec: v1.PersistentVolumeClaimSpec{
 			VolumeMode: &mode,
+		},
+	}
+	var libguestfsPod *v1.Pod
+	vm := &vmSchema.VirtualMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-vm",
+			Namespace: testNamespace,
+		},
+		Spec: vmSchema.VirtualMachineSpec{
+			Template: &vmSchema.VirtualMachineInstanceTemplateSpec{
+				Spec: vmSchema.VirtualMachineInstanceSpec{
+					Tolerations: []v1.Toleration{
+						{
+							Key:    "tol_key",
+							Value:  "tol_value",
+							Effect: "NoSchedule",
+						},
+					},
+					Affinity: &v1.Affinity{
+						PodAffinity: &v1.PodAffinity{
+							PreferredDuringSchedulingIgnoredDuringExecution: []v1.WeightedPodAffinityTerm{
+								{
+									Weight: 1,
+									PodAffinityTerm: v1.PodAffinityTerm{
+										LabelSelector: &metav1.LabelSelector{
+											MatchExpressions: []metav1.LabelSelectorRequirement{
+												{
+													Key:      "select_key",
+													Operator: "In",
+													Values:   []string{"select_val"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 	fakeCreateClientPVC := func(_ kubecli.KubevirtClient) (*guestfs.K8sClient, error) {
@@ -96,6 +141,18 @@ var _ = Describe("Guestfs shell", func() {
 		kubeClient = fake.NewSimpleClientset(pvc, otherPod)
 		return &guestfs.K8sClient{Client: kubeClient, VirtClient: kubevirtClient}, nil
 	}
+	fakeCreateClientPVCWithVM := func(_ kubecli.KubevirtClient) (*guestfs.K8sClient, error) {
+		kubeClient = fake.NewSimpleClientset(pvc)
+		kubeClient.Fake.PrependReactor("get", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, libguestfsPod, nil
+		})
+		kubeClient.Fake.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			libguestfsPod = action.(k8stesting.CreateAction).GetObject().(*v1.Pod)
+			libguestfsPod.Status.Phase = v1.PodRunning
+			return true, libguestfsPod, nil
+		})
+		return &guestfs.K8sClient{Client: kubeClient, VirtClient: kubecli.MockKubevirtClientInstance}, nil
+	}
 	fakeCreateClient := func(_ kubecli.KubevirtClient) (*guestfs.K8sClient, error) {
 		kubeClient = fake.NewSimpleClientset()
 		return &guestfs.K8sClient{Client: kubeClient, VirtClient: kubevirtClient}, nil
@@ -105,6 +162,10 @@ var _ = Describe("Guestfs shell", func() {
 		BeforeEach(func() {
 			guestfs.ImageSetFunc = fakeSetImage
 			guestfs.CreateAttacherFunc = fakeAttacherCreator
+			ctrl = gomock.NewController(GinkgoT())
+			kubecli.GetKubevirtClientFromClientConfig = kubecli.GetMockKubevirtClientFromClientConfig
+			kubecli.MockKubevirtClientInstance = kubecli.NewMockKubevirtClient(ctrl)
+			vmInterface = kubecli.NewMockVirtualMachineInterface(ctrl)
 		})
 
 		AfterEach(func() {
@@ -148,6 +209,16 @@ var _ = Describe("Guestfs shell", func() {
 			err := cmd()
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).Should(Equal(fmt.Sprintf("gid requires the uid to be set")))
+		})
+
+		It("Successfully apply VM's constraints", func() {
+			kubecli.MockKubevirtClientInstance.EXPECT().VirtualMachine(testNamespace).Return(vmInterface).AnyTimes()
+			vmInterface.EXPECT().Get(context.Background(), vm.Name, metav1.GetOptions{}).Return(vm, nil).AnyTimes()
+			guestfs.CreateClientFunc = fakeCreateClientPVCWithVM
+			cmd := testing.NewRepeatableVirtctlCommand(commandName, pvcName, "--vm", vm.Name)
+			Expect(cmd()).To(Succeed())
+			Expect(libguestfsPod.Spec.Tolerations).To(ContainElements(vm.Spec.Template.Spec.Tolerations))
+			Expect(libguestfsPod.Spec.Affinity).To(Equal(vm.Spec.Template.Spec.Affinity))
 		})
 	})
 

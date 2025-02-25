@@ -56,6 +56,7 @@ type guestfsCommand struct {
 	uid        string
 	gid        string
 	pullPolicy string
+	vm         string
 }
 
 // Following variables allow overriding the default functions (useful for unit testing)
@@ -83,6 +84,7 @@ func NewGuestfsShellCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&c.gid, "gid", "", "Set gid for the libguestfs-tool container. This works only combined when the uid is manually set")
 	cmd.SetUsageTemplate(templates.UsageTemplate())
 	cmd.PersistentFlags().StringVar(&c.fsGroup, "fsGroup", "", "Set the fsgroup for the libguestfs-tool container")
+	cmd.PersistentFlags().StringVar(&c.vm, "vm", "", "Provide a VM to apply its tolerations and affinity to the libguestfs-tool pod")
 
 	return cmd
 }
@@ -363,13 +365,23 @@ func (c *guestfsCommand) setGIDLibguestfs() (*int64, error) {
 	return nil, nil
 }
 
-func (c *guestfsCommand) createLibguestfsPod(cmd string, args []string, isBlock bool) (*corev1.Pod, error) {
+func (c *guestfsCommand) createLibguestfsPod(client *K8sClient, ns, cmd string, args []string, isBlock bool) (*corev1.Pod, error) {
 	var resources corev1.ResourceRequirements
+	var tolerations []corev1.Toleration
+	var affinity corev1.Affinity
 	if c.kvm {
 		resources = corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
 				KvmDevice: resource.MustParse("1"),
 			},
+		}
+	}
+	if c.vm != "" {
+		if vm, err := client.VirtClient.VirtualMachine(ns).Get(context.Background(), c.vm, metav1.GetOptions{}); err == nil {
+			tolerations = vm.Spec.Template.Spec.Tolerations
+			affinity = *vm.Spec.Template.Spec.Affinity
+		} else {
+			return nil, err
 		}
 	}
 	u, err := c.setUIDLibguestfs()
@@ -478,6 +490,8 @@ func (c *guestfsCommand) createLibguestfsPod(cmd string, args []string, isBlock 
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
+			Tolerations:   tolerations,
+			Affinity:      &affinity,
 		},
 	}
 	if isBlock {
@@ -538,7 +552,7 @@ func CreateAttacher(client *K8sClient, p *corev1.Pod, command string) error {
 }
 
 func (c *guestfsCommand) createInteractivePodWithPVC(client *K8sClient, ns, command string, args []string, isblock bool) error {
-	pod, err := c.createLibguestfsPod(command, args, isblock)
+	pod, err := c.createLibguestfsPod(client, ns, command, args, isblock)
 	if err != nil {
 		return err
 	}
