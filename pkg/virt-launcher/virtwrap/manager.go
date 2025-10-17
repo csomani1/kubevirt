@@ -33,6 +33,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +49,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/network"
 
 	"libvirt.org/go/libvirt"
+	"libvirt.org/go/libvirtxml"
 
 	k8sv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -1092,41 +1095,98 @@ func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineIn
 	}
 	c.DisksInfo = l.disksInfo
 
-	if !isMigrationTarget {
-		sriovDevices, err := sriov.CreateHostDevices(vmi)
-		if err != nil {
-			return nil, err
-		}
-
-		c.HotplugVolumes = hotplugVolumes
-		c.SRIOVDevices = sriovDevices
-
-		genericHostDevices, err := generic.CreateHostDevices(vmi.Spec.Domain.Devices.HostDevices)
-		if err != nil {
-			return nil, err
-		}
-		c.GenericHostDevices = genericHostDevices
-
-		genericDRAHostDevices, err := dra.CreateDRAHostDevices(vmi)
-		if err != nil {
-			return nil, err
-		}
-		c.GenericHostDevices = append(c.GenericHostDevices, genericDRAHostDevices...)
-
-		gpuHostDevices, err := gpu.CreateHostDevices(vmi.Spec.Domain.Devices.GPUs)
-		if err != nil {
-			return nil, err
-		}
-		c.GPUHostDevices = gpuHostDevices
-
-		gpuDRAHostDevices, err := dra.CreateDRAGPUHostDevices(vmi)
-		if err != nil {
-			return nil, err
-		}
-		c.GPUHostDevices = append(c.GPUHostDevices, gpuDRAHostDevices...)
+	sriovDevices, err := sriov.CreateHostDevices(vmi)
+	if err != nil {
+		return nil, err
 	}
 
+	c.HotplugVolumes = hotplugVolumes
+	c.SRIOVDevices = sriovDevices
+
+	genericHostDevices, err := generic.CreateHostDevices(vmi.Spec.Domain.Devices.HostDevices)
+	if err != nil {
+		return nil, err
+	}
+	c.GenericHostDevices = genericHostDevices
+
+	genericDRAHostDevices, err := dra.CreateDRAHostDevices(vmi)
+	if err != nil {
+		return nil, err
+	}
+	c.GenericHostDevices = append(c.GenericHostDevices, genericDRAHostDevices...)
+
+	gpuHostDevices, err := gpu.CreateHostDevices(vmi.Spec.Domain.Devices.GPUs)
+	if err != nil {
+		return nil, err
+	}
+	c.GPUHostDevices = gpuHostDevices
+
+	gpuDRAHostDevices, err := dra.CreateDRAGPUHostDevices(vmi)
+	if err != nil {
+		return nil, err
+	}
+
+	if isMigrationTarget {
+		fmt.Println("listening to socket")
+		if len(gpuHostDevices) > 0 {
+			go callback_process(testcallback, gpuHostDevices[0].Source.Address.UUID)
+		}
+	}
+
+	c.GPUHostDevices = append(c.GPUHostDevices, gpuDRAHostDevices...)
+
 	return c, nil
+}
+
+type LibvirtXMLCallbackFunc func(inputxml string, mdev_uuid string) string
+
+func testcallback(xmlstr string, mdev_uuid string) string {
+	domcfg := &libvirtxml.Domain{}
+	if err := domcfg.Unmarshal(xmlstr); err != nil {
+		fmt.Println("error unmarshaling")
+	}
+
+	if len(domcfg.Devices.Hostdevs) > 0 {
+		if domcfg.Devices.Hostdevs[0].SubsysMDev.Source.Address.UUID != "" {
+			domcfg.Devices.Hostdevs[0].SubsysMDev.Source.Address.UUID = mdev_uuid
+		}
+	}
+
+	finalxml, _ := domcfg.Marshal()
+
+	return finalxml
+}
+
+func callback_process(cb LibvirtXMLCallbackFunc, mdev_uuid string) {
+	socket, err := net.Listen("unix", "/tmp/kube-migration-hook-socket")
+	if err != nil {
+		fmt.Println("error listening ", err)
+	} else {
+		fmt.Println("about to accept")
+		conn, err := socket.Accept()
+		fmt.Println("accept conn")
+		if err != nil {
+			fmt.Println("error accept ", err)
+		}
+
+		go func(conn net.Conn) {
+			defer conn.Close()
+			buf := make([]byte, 4*1024*1024)
+			fmt.Println("Reading buf")
+			_, err := conn.Read(buf)
+			if err != nil {
+				fmt.Println("error read ", err)
+			}
+
+			ret := cb(string(buf[:]), mdev_uuid)
+
+			_, err = conn.Write([]byte(ret))
+			if err != nil {
+				fmt.Println("error write ", err)
+			}
+		}(conn)
+	}
+
 }
 
 func isFreePageReportingEnabled(clusterFreePageReportingDisabled bool, vmi *v1.VirtualMachineInstance) bool {
