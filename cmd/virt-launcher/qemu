@@ -1,5 +1,9 @@
 #!/bin/bash
-if [ "$2" != "release" ] || [ "$3" != "end" ] || [ "$4" != "migrated" ]; then
-	exit
+if [ "$2" == "release" ] && [ "$3" == "end" ] && [ "$4" == "migrated" ]; then
+        touch /run/kubevirt-private/backend-storage-meta/migrated
 fi
-touch /run/kubevirt-private/backend-storage-meta/migrated
+
+
+if [ "$2" == "migrate" ] && [ "$3" == "begin" ]; then
+        nc -U /tmp/kube-migration-hook-socket 2>/tmp/err | tee -a /tmp/log
+fi

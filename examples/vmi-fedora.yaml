@@ -15,6 +15,9 @@ spec:
       - disk:
           bus: virtio
         name: cloudinitdisk
+      gpus:
+      - deviceName: nvidia.com/GRID_RTX6000-1Q
+        name: gpu1
       interfaces:
       - masquerade: {}
         name: default
@@ -28,7 +31,7 @@ spec:
   terminationGracePeriodSeconds: 0
   volumes:
   - containerDisk:
-      image: registry:5000/kubevirt/fedora-with-test-tooling-container-disk:devel
+      image: quay.io/csomani/kubevirt/fedora-with-test-tooling-container-disk:devel
     name: containerdisk
   - cloudInitNoCloud:
       userData: |-

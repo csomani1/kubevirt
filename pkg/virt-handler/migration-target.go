@@ -213,6 +213,11 @@ func (c *MigrationTargetController) updateStatus(vmi *v1.VirtualMachineInstance,
 	}
 
 	domainExists := domain != nil
+	if err := c.podIsolationDetector.AdjustResources(vmi, c.clusterConfig.GetConfig().AdditionalGuestMemoryOverheadRatio); err != nil {
+		fmt.Println("adj res failed ", err)
+	} else {
+		fmt.Println("adjust res worked")
+	}
 
 	// detect domain on target node
 	if domainExists && !vmi.Status.MigrationState.TargetNodeDomainDetected {
