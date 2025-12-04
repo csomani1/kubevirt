@@ -75,7 +75,7 @@ require (
 	kubevirt.io/client-go v0.0.0-00010101000000-000000000000
 	kubevirt.io/containerized-data-importer-api v1.63.1
 	kubevirt.io/qe-tools v0.1.8
-	libvirt.org/go/libvirt v1.11005.0
+	libvirt.org/go/libvirt v1.11006.1-0.20251107141229-338a64f1030d
 	libvirt.org/go/libvirtxml v1.11000.1
 	sigs.k8s.io/controller-runtime v0.20.2
 	sigs.k8s.io/randfill v1.0.0

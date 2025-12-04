@@ -117,7 +117,7 @@ def _impl(ctx):
     return cc_common.create_cc_toolchain_config_info(
         ctx = ctx,
         cxx_builtin_include_directories = [
-            "/usr/lib/gcc/x86_64-redhat-linux/11/include",
+            "/usr/lib/gcc/x86_64-redhat-linux/14/include",
             "/usr/include",
         ],
         features = features,

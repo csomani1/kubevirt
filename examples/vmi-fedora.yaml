@@ -6,6 +6,8 @@ metadata:
     special: vmi-fedora
   name: vmi-fedora
 spec:
+  nodeSelector:
+    kubernetes.io/hostname: virt-tower01.desktop.lab.eng.rdu2.redhat.com
   domain:
     devices:
       disks:
@@ -28,7 +30,7 @@ spec:
   terminationGracePeriodSeconds: 0
   volumes:
   - containerDisk:
-      image: registry:5000/kubevirt/fedora-with-test-tooling-container-disk:devel
+      image: quay.io/csomani/kubevirt/fedora-with-test-tooling-container-disk:devel
     name: containerdisk
   - cloudInitNoCloud:
       userData: |-

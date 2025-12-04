@@ -177,6 +177,15 @@ pkg_tar(
     package_dir = "/",
 )
 
+pkg_tar(
+    name = "custom-qemu-build",
+    srcs = ["@custom-qemu//file"],
+    mode = "0755",
+    owner = "0.0",
+    package_dir = "/usr/libexec",
+    visibility = ["//visibility:public"],
+)
+
 oci_image(
     name = "version-container",
     base = select({
@@ -209,6 +218,7 @@ oci_image(
             ":nsswitch-tar",
             ":qemu-hook-tar",
             ":qemu-kvm-modules-dir-tar",
+            ":custom-qemu-build",
         ],
     }),
 )

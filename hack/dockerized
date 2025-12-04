@@ -12,9 +12,9 @@ fi
 
 fail_if_cri_bin_missing
 
-kubevirt_builder_version="2510281240-82d14f4b41"
-default_kubevirt_builder_image="quay.io/kubevirt/builder:${kubevirt_builder_version}"
-kubevirt_cross_compile_image="quay.io/kubevirt/builder-cross:${kubevirt_builder_version}"
+kubevirt_builder_version="2512011657-86a59fb78a-amd64"
+default_kubevirt_builder_image="quay.io/csomani/kubevirt/builder:${kubevirt_builder_version}"
+kubevirt_cross_compile_image="quay.io/csomani/kubevirt/builder-cross:${kubevirt_builder_version}"
 
 KUBEVIRT_BUILDER_IMAGE=${KUBEVIRT_BUILDER_IMAGE:-"${default_kubevirt_builder_image}"}
 
