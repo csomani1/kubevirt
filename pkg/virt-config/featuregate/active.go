@@ -229,6 +229,13 @@ const (
 	// Owner: SIG network
 	// Beta: v1.8
 	LiveUpdateNADRef = "LiveUpdateNADRef"
+
+	// Owner: @csomani1
+	// Alpha: v1.8.0
+	//
+	// The VGPUDedicatedHook fg enables the vGPU hook to run for vGPU live migrations, allowing the
+	// target XML's mdev UUID to be mutated.
+	VGPUDedicatedHook = "VGPUDedicatedHook"
 )
 
 func init() {
@@ -275,4 +282,5 @@ func init() {
 	RegisterFeatureGate(FeatureGate{Name: ReservedOverheadMemlock, State: Alpha})
 	RegisterFeatureGate(FeatureGate{Name: OptOutRoleAggregation, State: Alpha})
 	RegisterFeatureGate(FeatureGate{Name: LiveUpdateNADRef, State: Beta})
+	RegisterFeatureGate(FeatureGate{Name: VGPUDedicatedHook, State: Alpha})
 }
