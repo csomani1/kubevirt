@@ -734,6 +734,14 @@ func (c *MigrationTargetController) processVMI(vmi *v1.VirtualMachineInstance) e
 		return err
 	}
 
+	// Higher memlock needed due to GPU; must be set before domain runs to avoid
+	// "cannot limit locked memory of process: Operation not permitted".
+	if len(vmi.Spec.Domain.Devices.GPUs) > 0 {
+		if err := c.podIsolationDetector.AdjustResources(vmi, c.clusterConfig.GetConfig().AdditionalGuestMemoryOverheadRatio); err != nil {
+			return fmt.Errorf("failed to adjust resources for GPU memlock on migration target: %w", err)
+		}
+	}
+
 	options := virtualMachineOptions(nil, 0, nil, c.capabilities, c.clusterConfig)
 	options.InterfaceDomainAttachment = domainspec.DomainAttachmentByInterfaceName(vmi.Spec.Domain.Devices.Interfaces, c.clusterConfig.GetNetworkBindings())
 
