@@ -63,6 +63,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/testutils"
 	"kubevirt.io/kubevirt/pkg/util"
 	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
+	"kubevirt.io/kubevirt/pkg/virt-config/featuregate"
 	virtcache "kubevirt.io/kubevirt/pkg/virt-handler/cache"
 	"kubevirt.io/kubevirt/pkg/virt-handler/cgroup"
 	cmdclient "kubevirt.io/kubevirt/pkg/virt-handler/cmd-client"
@@ -2264,7 +2265,7 @@ var _ = Describe("VirtualMachineInstance", func() {
 			testutils.ExpectEvent(recorder, "cannot migrate VMI which does not use masquerade or a migratable plugin to connect to the pod network")
 		})
 
-		Context("check that migration is not supported when using Host Devices", func() {
+		Context("check migration support when using Host Devices", func() {
 			envName := util.ResourceNameToEnvVar(v1.PCIResourcePrefix, "dev1")
 
 			BeforeEach(func() {
@@ -2291,26 +2292,111 @@ var _ = Describe("VirtualMachineInstance", func() {
 				Expect(condition.Reason).To(Equal(v1.VirtualMachineInstanceReasonHostDeviceNotMigratable))
 			})
 
-			It("should not be allowed to live-migrate if the VMI uses PCI GPU", func() {
-				envName := util.ResourceNameToEnvVar(v1.PCIResourcePrefix, "dev1")
-				_ = os.Setenv(envName, "0000:81:01.0")
-				defer func() {
+			Context("with GPU", func() {
+				BeforeEach(func() {
+					envName := util.ResourceNameToEnvVar(v1.PCIResourcePrefix, "dev1")
+					_ = os.Setenv(envName, "0000:81:01.0")
+					envName2 := util.ResourceNameToEnvVar(v1.PCIResourcePrefix, "nvidia.com/gpu")
+					_ = os.Setenv(envName2, "0000:81:02.0")
+				})
+
+				AfterEach(func() {
+					envName := util.ResourceNameToEnvVar(v1.PCIResourcePrefix, "dev1")
 					_ = os.Unsetenv(envName)
-				}()
+					envName2 := util.ResourceNameToEnvVar(v1.PCIResourcePrefix, "nvidia.com/gpu")
+					_ = os.Unsetenv(envName2)
+				})
 
-				vmi := api2.NewMinimalVMI("testvmi")
-				vmi.Spec.Domain.Devices.GPUs = []v1.GPU{
-					{
-						Name:       "name1",
-						DeviceName: "dev1",
-					},
-				}
+				It("should not be allowed to live-migrate if the VMI uses generic PCI GPU", func() {
+					vmi := api2.NewMinimalVMI("testvmi")
+					vmi.Spec.Domain.Devices.GPUs = []v1.GPU{
+						{
+							Name:       "name1",
+							DeviceName: "dev1",
+						},
+					}
 
-				condition, isBlockMigration := controller.calculateLiveMigrationCondition(vmi)
-				Expect(isBlockMigration).To(BeFalse())
-				Expect(condition.Type).To(Equal(v1.VirtualMachineInstanceIsMigratable))
-				Expect(condition.Status).To(Equal(k8sv1.ConditionFalse))
-				Expect(condition.Reason).To(Equal(v1.VirtualMachineInstanceReasonHostDeviceNotMigratable))
+					condition, isBlockMigration := controller.calculateLiveMigrationCondition(vmi)
+					Expect(isBlockMigration).To(BeFalse())
+					Expect(condition.Type).To(Equal(v1.VirtualMachineInstanceIsMigratable))
+					Expect(condition.Status).To(Equal(k8sv1.ConditionFalse))
+					Expect(condition.Reason).To(Equal(v1.VirtualMachineInstanceReasonHostDeviceNotMigratable))
+					Expect(condition.Message).To(Equal("VMI uses non migratable PCI host devices"))
+				})
+
+				It("should not be allowed to live-migrate if the VMI uses Nvidia vGPU but feature gate is disabled", func() {
+					vmi := api2.NewMinimalVMI("testvmi")
+					vmi.Spec.Domain.Devices.GPUs = []v1.GPU{
+						{
+							Name:       "name1",
+							DeviceName: "nvidia.com/gpu",
+						},
+					}
+
+					config, _, _ := testutils.NewFakeClusterConfigUsingKVConfig(&v1.KubeVirtConfiguration{
+						DeveloperConfiguration: &v1.DeveloperConfiguration{
+							FeatureGates: []string{},
+						},
+					})
+					controller.clusterConfig = config
+
+					condition, isBlockMigration := controller.calculateLiveMigrationCondition(vmi)
+					Expect(isBlockMigration).To(BeFalse())
+					Expect(condition.Type).To(Equal(v1.VirtualMachineInstanceIsMigratable))
+					Expect(condition.Status).To(Equal(k8sv1.ConditionFalse))
+					Expect(condition.Reason).To(Equal(v1.VirtualMachineInstanceReasonHostDeviceNotMigratable))
+					Expect(condition.Message).To(Equal("vGPU migration requires feature gate " + featuregate.VGPULiveMigration + " to be enabled"))
+				})
+
+				It("should be allowed to live-migrate if the VMI uses single Nvidia vGPU and feature gate is enabled", func() {
+					vmi := api2.NewMinimalVMI("testvmi")
+					vmi.Spec.Domain.Devices.GPUs = []v1.GPU{
+						{
+							Name:       "name1",
+							DeviceName: "nvidia.com/gpu",
+						},
+					}
+
+					config, _, _ := testutils.NewFakeClusterConfigUsingKVConfig(&v1.KubeVirtConfiguration{
+						DeveloperConfiguration: &v1.DeveloperConfiguration{
+							FeatureGates: []string{featuregate.VGPULiveMigration},
+						},
+					})
+					controller.clusterConfig = config
+
+					condition, isBlockMigration := controller.calculateLiveMigrationCondition(vmi)
+					Expect(isBlockMigration).To(BeFalse())
+					Expect(condition.Type).To(Equal(v1.VirtualMachineInstanceIsMigratable))
+					Expect(condition.Status).To(Equal(k8sv1.ConditionTrue))
+				})
+
+				It("should not be allowed to live-migrate if the VMI uses multiple Nvidia vGPUs", func() {
+					vmi := api2.NewMinimalVMI("testvmi")
+					vmi.Spec.Domain.Devices.GPUs = []v1.GPU{
+						{
+							Name:       "name1",
+							DeviceName: "nvidia.com/gpu",
+						},
+						{
+							Name:       "name2",
+							DeviceName: "nvidia.com/gpu",
+						},
+					}
+
+					config, _, _ := testutils.NewFakeClusterConfigUsingKVConfig(&v1.KubeVirtConfiguration{
+						DeveloperConfiguration: &v1.DeveloperConfiguration{
+							FeatureGates: []string{featuregate.VGPULiveMigration},
+						},
+					})
+					controller.clusterConfig = config
+
+					condition, isBlockMigration := controller.calculateLiveMigrationCondition(vmi)
+					Expect(isBlockMigration).To(BeFalse())
+					Expect(condition.Type).To(Equal(v1.VirtualMachineInstanceIsMigratable))
+					Expect(condition.Status).To(Equal(k8sv1.ConditionFalse))
+					Expect(condition.Reason).To(Equal(v1.VirtualMachineInstanceReasonHostDeviceNotMigratable))
+					Expect(condition.Message).To(Equal("VMI uses non migratable PCI host devices"))
+				})
 			})
 		})
 

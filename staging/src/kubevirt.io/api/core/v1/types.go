@@ -1442,6 +1442,11 @@ const (
 	// This annotation is set by virt-handler based on the cluster configuration.
 	QGSSocketPathAnnotation = "kubevirt.io/qgs-socket-path"
 
+	// TargetMdevUUIDAnnotation specifies the vGPU mdev UUID during live migration for the target VM.
+	// The device plugin framework in KubeVirt passes the mdev UUID to virt-launcher during allocation
+	// where it is then read and set while building the converter context in the LibvirtDomainManager.
+	TargetMdevUUIDAnnotation = "kubevirt.io/target-mdev-uuid"
+
 	// AllowAccessClusterServicesNPLabel is a pod label to be set by virt-components to indicate that they require
 	// access to cluster services otherwise blocked by the strict network policy (NP).
 	// This label will be applied to the following virt pods:
