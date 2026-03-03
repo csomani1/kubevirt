@@ -66,6 +66,7 @@ func virtualMachineOptions(
 			FreePageReportingDisabled: clusterConfig.IsFreePageReportingDisabled(),
 			BochsDisplayForEFIGuests:  bochsDisplay,
 			SerialConsoleLogDisabled:  clusterConfig.IsSerialConsoleLogDisabled(),
+			VGPULiveMigrationEnabled:  clusterConfig.VGPUDedicatedHookEnabled(),
 		}
 	}
 

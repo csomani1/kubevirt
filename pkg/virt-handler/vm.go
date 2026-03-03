@@ -70,6 +70,7 @@ import (
 	"kubevirt.io/kubevirt/pkg/util/hardware"
 	"kubevirt.io/kubevirt/pkg/util/migrations"
 	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
+	"kubevirt.io/kubevirt/pkg/virt-config/featuregate"
 	"kubevirt.io/kubevirt/pkg/virt-controller/watch/topology"
 	virtcache "kubevirt.io/kubevirt/pkg/virt-handler/cache"
 	"kubevirt.io/kubevirt/pkg/virt-handler/cgroup"
@@ -1204,8 +1205,9 @@ func (c *VirtualMachineController) calculateLiveMigrationCondition(vmi *v1.Virtu
 		return newNonMigratableCondition(err.Error(), v1.VirtualMachineInstanceReasonCPUModeNotMigratable), isBlockMigration
 	}
 
-	if vmiContainsPCIHostDevice(vmi) {
-		return newNonMigratableCondition("VMI uses a PCI host devices", v1.VirtualMachineInstanceReasonHostDeviceNotMigratable), isBlockMigration
+	reason, ok := vmiContainsNonMigratablePCIHostDevices(vmi, c.clusterConfig.VGPUDedicatedHookEnabled())
+	if ok {
+		return newNonMigratableCondition(reason, v1.VirtualMachineInstanceReasonHostDeviceNotMigratable), isBlockMigration
 	}
 
 	if util.IsSEVVMI(vmi) {
@@ -1240,8 +1242,23 @@ func (c *VirtualMachineController) calculateLiveMigrationCondition(vmi *v1.Virtu
 	}, isBlockMigration
 }
 
-func vmiContainsPCIHostDevice(vmi *v1.VirtualMachineInstance) bool {
-	return len(vmi.Spec.Domain.Devices.HostDevices) > 0 || len(vmi.Spec.Domain.Devices.GPUs) > 0
+func vmiContainsNonMigratablePCIHostDevices(vmi *v1.VirtualMachineInstance, vGPUDedicatedHookEnabled bool) (string, bool) {
+	var nonMigratableGPUs bool
+	var reason string
+	if len(vmi.Spec.Domain.Devices.GPUs) == 1 {
+		if !strings.HasPrefix(vmi.Spec.Domain.Devices.GPUs[0].DeviceName, "nvidia.com") {
+			nonMigratableGPUs = true
+			reason = "VMI uses non migratable PCI host devices"
+		} else if !vGPUDedicatedHookEnabled {
+			nonMigratableGPUs = true
+			reason = "vGPU migration requires feature gate " + featuregate.VGPUDedicatedHook + " to be enabled"
+		}
+	} else if len(vmi.Spec.Domain.Devices.GPUs) > 1 {
+		nonMigratableGPUs = true
+		reason = "VMI uses non migratable PCI host devices"
+	}
+
+	return reason, len(vmi.Spec.Domain.Devices.HostDevices) > 0 || nonMigratableGPUs
 }
 
 type multipleNonMigratableCondition struct {
@@ -1297,8 +1314,9 @@ func (c *VirtualMachineController) calculateLiveStorageMigrationCondition(vmi *v
 		multiCond.addNonMigratableCondition(v1.VirtualMachineInstanceReasonCPUModeNotMigratable, err.Error())
 	}
 
-	if vmiContainsPCIHostDevice(vmi) {
-		multiCond.addNonMigratableCondition(v1.VirtualMachineInstanceReasonHostDeviceNotMigratable, "VMI uses a PCI host devices")
+	reason, ok := vmiContainsNonMigratablePCIHostDevices(vmi, c.clusterConfig.VGPUDedicatedHookEnabled())
+	if ok {
+		multiCond.addNonMigratableCondition(v1.VirtualMachineInstanceReasonHostDeviceNotMigratable, reason)
 	}
 
 	if util.IsSEVVMI(vmi) {
